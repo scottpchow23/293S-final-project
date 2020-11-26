@@ -34,7 +34,7 @@ def calculate_soft_tf(path):
         soft_tf_histogram[index] += math.exp(-0.5 * diff * diff / sigma / sigma)
 
   for i in range(len(soft_tf_histogram)):
-    soft_tf_histogram[i] /= np.size(data, 1)
+    soft_tf_histogram[i] /= np.size(data)
 
   return soft_tf_histogram
 

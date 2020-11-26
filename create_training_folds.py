@@ -1,6 +1,8 @@
 from pathlib import Path
 from enum import Enum
 import sys
+import time
+import click
 # from <https://github.com/faneshion/DRMM/blob/9d348640ef8a56a8c1f2fa0754fe87d8bb5785bd/NN4IR.cpp>
 FOLDS = {
     'f1': {'302', '303', '309', '316', '317', '319', '323', '331', '336', '341', '356', '357', '370', '373', '378', '381', '383', '392', '394', '406', '410', '411', '414', '426', '428', '433', '447', '448', '601', '607', '608', '612', '617', '619', '635', '641', '642', '646', '647', '654', '656', '662', '665', '669', '670', '679', '684', '690', '692', '700'},
@@ -86,8 +88,10 @@ experiments = {
   }
 }
 
-def run():
-  experiment = experiments[sys.argv[1]]
+@click.command()
+@click.option('--type', help='Choose an experiment type from: control, drmm, drmm-only, knrm, or knrm-only.', required=True)
+def run(type):
+  experiment = experiments[type]
   label_index = {}
   drmm_feature_mapping = {}
   drmm_features_index = {}
@@ -98,7 +102,7 @@ def run():
 
   # The index is shared across features to prevent numbering conflicts between features
   index = 1
-  print('define control + drmm feature mapping')
+  click.echo('defining control + drmm feature mapping')
   with open('test-data/robust/example.features.txt') as f:
     line = f.readline()
     _, _, *features = line.split()
@@ -106,9 +110,8 @@ def run():
       id, _ = feature.split(':')
       drmm_feature_mapping[id] = index
       index += 1
-    print(drmm_feature_mapping)
 
-  print('define knrm feature mapping')
+  click.echo('defining knrm feature mapping')
   with open('test-data/robust/knrm_features.csv') as f:
     line = f.readline()
     _, _, *features = line.split()
@@ -116,9 +119,8 @@ def run():
       id, _ = feature.split(':')
       knrm_feature_mapping[id] = index
       index += 1
-    print(knrm_feature_mapping)
 
-  print('loading qrels')
+  click.echo('loading qrels')
   with open('test-data/robust/qrels') as f:
     for line in f:
       query_id, _, doc_id, label = line.split()
@@ -128,43 +130,49 @@ def run():
       label_index[query_id][doc_id] = label
 
   if experiment['use_drmm_control']:
-    print('loading control + drmm features')
+    start = time.time()
     with open('test-data/robust/trec45.features.txt') as f:
-      for line in f:
-        query_id, doc_id, *features = line.split()
-        if query_id not in drmm_features_index:
-          drmm_features_index[query_id] = {}
+      with click.progressbar(f, label='loading control + drmm features') as bar:
+        for line in bar:
+          query_id, doc_id, *features = line.split()
+          if query_id not in drmm_features_index:
+            drmm_features_index[query_id] = {}
 
-        feature_weight_map = {}
-        for feature in features:
-          id, weight = feature.split(':')
-          feature_weight_map[id] = weight
-        complete_features = []
-        for cur_feature_id, new_feature_id in sorted(drmm_feature_mapping.items()):
-          # find feature_id in features (if it exists)
-          weight = 0
-          if cur_feature_id in feature_weight_map:
-            weight = feature_weight_map[cur_feature_id] if new_feature_id not in feature_block_list else 0
-          # add feature to complete_features
-          complete_features.append(f'{new_feature_id}:{weight}')
-        drmm_features_index[query_id][doc_id] = complete_features
+          feature_weight_map = {}
+          for feature in features:
+            id, weight = feature.split(':')
+            feature_weight_map[id] = weight
+          complete_features = []
+          for cur_feature_id, new_feature_id in sorted(drmm_feature_mapping.items()):
+            # find feature_id in features (if it exists)
+            weight = 0
+            if cur_feature_id in feature_weight_map:
+              weight = feature_weight_map[cur_feature_id] if new_feature_id not in feature_block_list else 0
+            # add feature to complete_features
+            complete_features.append(f'{new_feature_id}:{weight}')
+          drmm_features_index[query_id][doc_id] = complete_features
+    end = time.time()
+    click.echo(f'Done in {end - start} seconds.')
 
   if experiment['use_knrm']:
-    print('loading knrm features')
-    with open('test-data/robust/knrm.features.txt') as f:
-      for line in f:
-        query_id, doc_id, *features = line.split()
-        if query_id not in knrm_features_index:
-          knrm_features_index[query_id] = {}
-        complete_features = []
-        for feature in features:
-          feature_id, feature_weight = feature.split(':')
-          new_feature_id = knrm_feature_mapping[feature_id]
-          complete_features.append(f'{new_feature_id}:{feature_weight}')
-        knrm_features_index[query_id][doc_id] = complete_features
+    start = time.time()
+    with open('test-data/robust/knrm.features') as f:
+      with click.progressbar(f, label='loading knrm features') as bar:
+        for line in bar:
+          query_id, doc_id, *features = line.split()
+          if query_id not in knrm_features_index:
+            knrm_features_index[query_id] = {}
+          complete_features = []
+          for feature in features:
+            feature_id, feature_weight = feature.split(':')
+            new_feature_id = knrm_feature_mapping[feature_id]
+            complete_features.append(f'{new_feature_id}:{feature_weight}')
+          knrm_features_index[query_id][doc_id] = complete_features
+    end = time.time()
+    click.echo(f'Done in {end - start} seconds.')
 
   def create_feature_file_from_fold(fold, parent_fold, type):
-    path_to_folds = f'test-data/{sys.argv[1]}'
+    path_to_folds = f'test-data/{type}'
     Path(f'{path_to_folds}/{parent_fold}').mkdir(parents=True, exist_ok=True)
     with open(f'{path_to_folds}/{parent_fold}/{type}.txt', 'w') as f:
       for query_id in SMALL_FOLDS[fold]:
@@ -184,19 +192,19 @@ def run():
               line = f'{label} qid:{query_id} {" ".join(features)} #docid:{doc_id}\n'
               f.write(line)
 
-  print('create training, testing, and validation files for each fold')
-  for fold in FOLD_GROUPS:
-    train_group, test_group, valid_group = FOLD_GROUPS[fold].values()
-    # Build training file
-    create_feature_file_from_fold(train_group, fold, 'train')
-    # Build test file
-    create_feature_file_from_fold(test_group, fold, 'test')
-    # Build validation file
-    create_feature_file_from_fold(valid_group, fold, 'valid')
+  start = time.time()
+  with click.progressbar(FOLD_GROUPS, label='create training, testing, and validation files for each fold') as bar:
+    for fold in bar:
+      train_group, test_group, valid_group = FOLD_GROUPS[fold].values()
+      # Build training file
+      create_feature_file_from_fold(train_group, fold, 'train')
+      # Build test file
+      create_feature_file_from_fold(test_group, fold, 'test')
+      # Build validation file
+      create_feature_file_from_fold(valid_group, fold, 'valid')
+  end = time.time()
+  click.echo(f'Done in {end - start} seconds.')
 
 
 if __name__ == '__main__':
-  if len(sys.argv) is not 2:
-    print('Usage: python create_training_folds.py experiment-type')
-    exit(1)
   run()

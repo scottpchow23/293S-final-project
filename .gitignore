@@ -5,3 +5,5 @@ robust-index.tar.gz
 test-data
 indexes
 output
+output_old
+results.txt
